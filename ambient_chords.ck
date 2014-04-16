@@ -6,7 +6,7 @@
 
 240::ms => dur clockTick;
 [10.0, 15.0, 22.5, 23.79, 35.63] @=> float minorFreqs[];
-[10.0, 15.0, 17.82, 20, 29.97] @=> float majorFreqs[];
+[7.94, 11.89, 17.82, 20, 29.97] @=> float majorFreqs[];
 [10.0, 15.0] @=> float baseFreqs[];
 
 
@@ -17,8 +17,11 @@
 
 KBHit kb;
 
-//[10.0, 12.0, 15, 16.0] @=> float freqs[];
-//[10, 12, 15, 17] @=> int freqs[];
+// karmic truisms
+["Top"] @=> string topTruisms[];
+["Bottom"] @=> string bottomTruisms[];
+["Ascend"] @=> string ascentTruisms[];
+["Descend"] @=> string descentTruisms[];
 
 fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
     int randomOctave, int pluck, int dacChannel)
@@ -75,6 +78,23 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
     adsr.keyOff();
 }
 
+fun string spoutKnowledge(int change, int intent)
+{
+    if (intent < 0) {
+        if (change) {
+            return descentTruisms[Math.random2(0, descentTruisms.size() - 1)];
+        } else {
+            return bottomTruisms[Math.random2(0, bottomTruisms.size() - 1)];
+        }
+    } else {
+        if (change) {
+            return ascentTruisms[Math.random2(0, ascentTruisms.size() - 1)];
+        } else {
+            return topTruisms[Math.random2(0, topTruisms.size() - 1)];
+        }
+    }
+}
+
 fun void keyboardListener()
 {
     while (true)
@@ -82,7 +102,32 @@ fun void keyboardListener()
         kb => now;
         while (kb.more())
         {
-            <<< 'a' == kb.getchar()  >>>;
+            kb.getchar() => int curChar;
+            if ('q' == curChar) {
+                curMajorness => float old;
+                Math.min(1, curMajorness + .1) => curMajorness;
+                <<< spoutKnowledge(old != curMajorness, 1) >>>;
+            } else if ('a' == curChar) {
+                curMajorness => float old;
+                Math.max(0, curMajorness - .1) => curMajorness;
+                <<< spoutKnowledge(old != curMajorness, -1) >>>;
+            } else if ('o' == curChar) {
+                curBaseness => float old;
+                Math.min(1, curBaseness + .1) => curBaseness;
+                <<< spoutKnowledge(old != curBaseness, 1) >>>;
+            } else if ('l' == curChar) {
+                curBaseness => float old;
+                Math.max(0, curBaseness - .1) => curBaseness;
+                <<< spoutKnowledge(old != curBaseness, -1) >>>;
+            } else if ('i' == curChar) {
+                curDuration => int old;
+                Math.min(40, curDuration + 2) $ int => curDuration;
+                <<< spoutKnowledge(old != curDuration, 1) >>>;
+            } else if ('k' == curDuration) {
+                curDuration => int old;
+                Math.max(10, curDuration - 2) $ int => curDuration;
+                <<< spoutKnowledge(old != curDuration, -1) >>>;
+            }
         }
     }
 }
