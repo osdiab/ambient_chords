@@ -1,5 +1,6 @@
 // impulse to filter to dac
 
+0 => int curSpork;
 15 => float pitch;
 .2 => float pluckProbability;
 
@@ -9,17 +10,22 @@
 [1.985, 3.97, 7.94, 11.89, 17.82, 20, 29.97] @=> float majorFreqs[];
 [10.0, 15.0] @=> float baseFreqs[];
 
+dac.channels() => int numChannels;
+NRev reverbs[numChannels];
+Echo echos[numChannels];
+HPF hpfs[numChannels];
 
-20 => int curDuration;
+1 => int counter;
+15 => int curDuration;
 .1 => float curReverb;
 0 => float curMajorness;
 0 => float curSimplicity;
 0 => float curNoisiness;
 0 => float curBassiness;
 0 => int playing;
-.0005 => float curVolume;
-
-HPF hpf;
+1 => float maxVolume;
+1 => float curVolume;
+.05 => float volFactor;
 
 KBHit kb;
 
@@ -30,36 +36,34 @@ KBHit kb;
 ["Descend"] @=> string descentTruisms[];
 
 fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
-    int randomOctave, int pluck)
+    int pluck)
 {
     curDuration * clockTick => dur duration;
     ADSR adsr;
-    Echo echo;
-    .1 => adsr.gain;
+    adsr.set(clockTick * 6, duration, 0, 400::ms);
+    volFactor => adsr.gain;
 
-    Math.random2(0, dac.channels() - 1) => int majorDacChannel;
-    Math.random2(0, dac.channels() - 1) => int minorDacChannel;
-    Math.random2(0, dac.channels() - 1) => int baseDacChannel;
-    SinOsc minorOsc =>  adsr => Chorus majorChorus =>
-        echo => hpf => NRev majorReverb =>  dac.chan(majorDacChannel);
-    SinOsc majorOsc =>  adsr => Chorus minorChorus =>
-        echo => hpf => NRev minorReverb =>  dac.chan(minorDacChannel);
-    SinOsc baseOsc =>  adsr => Chorus baseChorus =>
-        echo => hpf => NRev baseReverb =>  dac.chan(baseDacChannel);
+    Math.random2(0, numChannels - 1) => int majorDacChannel;
+    Math.random2(0, numChannels - 1) => int minorDacChannel;
+    Math.random2(0, numChannels - 1) => int baseDacChannel;
 
-    .1 => majorChorus.modDepth;
-    .1 => minorChorus.modDepth;
-    .1 => baseChorus.modDepth;
-
-    (curMajorness * (1 - curSimplicity)) => majorOsc.gain;
-    ((1 - curMajorness) * (1 - curSimplicity)) => minorOsc.gain;
-    (curSimplicity) => baseOsc.gain;
-
-    (pitch * majorFreqs[majorFreq]) => majorOsc.freq;
+    SinOsc minorOsc => adsr =>
+        echos[majorDacChannel] => hpfs[majorDacChannel] =>
+        reverbs[majorDacChannel] =>  dac.chan(majorDacChannel);
     (pitch * minorFreqs[minorFreq]) => minorOsc.freq;
-    (pitch * baseFreqs[baseFreq]) => baseOsc.freq;
+    ((1 - curMajorness) * (1 - curSimplicity)) * volFactor => minorOsc.gain;
 
-    clockTick * 2 => echo.delay;
+    SinOsc majorOsc => adsr =>
+        echos[minorDacChannel] => hpfs[minorDacChannel]
+        => reverbs[minorDacChannel] =>  dac.chan(minorDacChannel);
+    (pitch * majorFreqs[majorFreq]) => majorOsc.freq;
+    (curMajorness * (1 - curSimplicity)) * volFactor => majorOsc.gain;
+
+    SinOsc baseOsc => adsr =>
+        echos[baseDacChannel] => hpfs[baseDacChannel] =>
+        reverbs[baseDacChannel] =>  dac.chan(baseDacChannel);
+    (pitch * baseFreqs[baseFreq]) => baseOsc.freq;
+    (curSimplicity) * volFactor => baseOsc.gain;
 
     if (pluck) {
         if (curMajorness > .5) {
@@ -69,20 +73,17 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
         }
 
         adsr.set(10::ms, duration, 0, 400::ms);
-        curReverb * 2 => majorReverb.mix;
-        curReverb * 2 => minorReverb.mix;
-        curReverb * 2 => baseReverb.mix;
-    } else {
-        adsr.set(clockTick * 6, duration, 0, 400::ms);
-        curReverb => majorReverb.mix;
-        curReverb => minorReverb.mix;
-        curReverb => baseReverb.mix;
     }
 
-
     adsr.keyOn();
-    duration * 1.3 => now;
+    duration * 1.5 => now;
     adsr.keyOff();
+    500::ms => now;
+
+    minorOsc =< dac;
+    majorOsc =< dac;
+    baseOsc =< dac;
+    adsr =< dac;
 }
 
 fun string spoutKnowledge(int change, int intent)
@@ -104,6 +105,8 @@ fun string spoutKnowledge(int change, int intent)
 
 fun void keyboardListener()
 {
+    <<< "\n", "majorness: + q, - a.\n", "simplicity: +o, -l\n", "noisiness: +i, -k\n",
+    "bassiness: +w, -s\n", "volume: +e, -d\n", "space: play/pause" >>>;
     while (true)
     {
         kb => now;
@@ -143,13 +146,26 @@ fun void keyboardListener()
                 Math.max(0, curBassiness - .1) => curBassiness;
                 <<< "bassiness: ", spoutKnowledge(old != curBassiness, -1) >>>;
             } else if ('e' == curChar) {
-                curVolume => float old;
-                Math.min(.001, curVolume + .00003) => curVolume;
-                <<< "volume: ", spoutKnowledge(old != curVolume, 1) >>>;
+                curVolume => float oldVolume;
+                Math.min(maxVolume, curVolume + (maxVolume / 50)) => float newVolume;
+                Std.fabs(newVolume - oldVolume) / 10 => float stepSize;
+                while (curVolume < newVolume) {
+                    Math.min(curVolume + stepSize, newVolume) => curVolume;
+                    curVolume => dac.gain;
+                    20 :: ms => now;
+                }
+                <<< "volume: ", curVolume, spoutKnowledge(oldVolume != newVolume, 1) >>>;
             } else if ('d' == curChar) {
-                curVolume => float old;
-                Math.max(0, curVolume - .00003) => curVolume;
-                <<< "volume: ", spoutKnowledge(old != curVolume, -1) >>>;
+                curVolume => float oldVolume;
+                Math.max(0, curVolume - (maxVolume / 50)) => float newVolume;
+                Std.fabs(newVolume - oldVolume) / 10 => float stepSize;
+                while (curVolume > newVolume) {
+                    Math.max(curVolume - stepSize, newVolume) => curVolume;
+                    curVolume => dac.gain;
+                    20 :: ms => now;
+                }
+
+                <<< "volume: ", curVolume, spoutKnowledge(oldVolume != curVolume, -1) >>>;
             } else if (' ' == curChar) {
                 !playing => playing;
                 if (playing) {
@@ -176,16 +192,42 @@ fun void generateNoise()
 }
 
 spork ~ keyboardListener();
-spork ~ generateNoise();
+
+for (0 => int i; i < numChannels; i++) {
+    curReverb => reverbs[i].mix;
+    volFactor => reverbs[i].gain;
+
+    clockTick * 2 => echos[i].delay;
+    volFactor => echos[i].gain;
+
+    volFactor => hpfs[i].gain;
+}
+
+curVolume => float prevVolume;
+curVolume => dac.gain;
+
+curBassiness => float prevBassiness;
+for (0 => int i; i < numChannels; i++) {
+    300 - curBassiness * 240 => hpfs[i].freq;
+}
 
 // infinite time-loop
 while (true)
 {
-    curVolume => dac.gain;
+    if (curVolume != prevVolume) {
+        curVolume => dac.gain;
+        curVolume => prevVolume;
+        <<< "curVolume gain: ", dac.gain() >>>;
+    }
 
-    300 - curBassiness * 240 => hpf.freq;
-    Math.random2(0, 6) => int randomInterval;
-    Math.random2(0, 5) => int randomOctave;
+    if (curBassiness != prevBassiness) {
+        for (0 => int i; i < numChannels; i++) {
+            300 - curBassiness * 240 => hpfs[i].freq;
+        }
+        curBassiness => prevBassiness;
+    }
+
+    Math.random2(2, 6) => int randomInterval;
     Math.random2(0, majorFreqs.size() - 1) => int majorFreq;
     Math.random2(0, minorFreqs.size() - 1) => int minorFreq;
     Math.random2(0, baseFreqs.size() - 1) => int baseFreq;
@@ -202,6 +244,6 @@ while (true)
 
     (Math.randomf() < pluckProbability) => int pluck;
     if (playing) {
-        spork ~ triggerNote(majorFreq, minorFreq, baseFreq, randomOctave, pluck);
+        spork ~ triggerNote(majorFreq, minorFreq, baseFreq, pluck);
     }
 }
