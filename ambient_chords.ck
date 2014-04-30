@@ -1,13 +1,12 @@
 // impulse to filter to dac
 
-0 => int curSpork;
 15 => float pitch;
 .2 => float pluckProbability;
 
 
 240::ms => dur clockTick;
-[2.5, 5.0, 10.0, 15.0, 22.5, 23.79, 35.63] @=> float minorFreqs[];
-[1.985, 3.97, 7.94, 11.89, 17.82, 20, 29.97] @=> float majorFreqs[];
+[5.0, 10.0, 15.0, 22.5, 23.79, 35.63] @=> float minorFreqs[];
+[3.97, 7.94, 11.89, 17.82, 20, 29.97] @=> float majorFreqs[];
 [10.0, 15.0] @=> float baseFreqs[];
 
 dac.channels() => int numChannels;
@@ -15,6 +14,7 @@ NRev reverbs[numChannels];
 Echo echos[numChannels];
 HPF hpfs[numChannels];
 
+0 => float curCrushiness;
 1 => int counter;
 15 => int curDuration;
 .1 => float curReverb;
@@ -25,7 +25,7 @@ HPF hpfs[numChannels];
 0 => int playing;
 1 => float maxVolume;
 1 => float curVolume;
-.05 => float volFactor;
+.5 => float volFactor;
 
 KBHit kb;
 
@@ -39,51 +39,81 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
     int pluck)
 {
     curDuration * clockTick => dur duration;
-    ADSR adsr;
-    adsr.set(clockTick * 6, duration, 0, 400::ms);
-    volFactor => adsr.gain;
 
     Math.random2(0, numChannels - 1) => int majorDacChannel;
     Math.random2(0, numChannels - 1) => int minorDacChannel;
     Math.random2(0, numChannels - 1) => int baseDacChannel;
 
-    SinOsc minorOsc => adsr =>
-        echos[majorDacChannel] => hpfs[majorDacChannel] =>
-        reverbs[majorDacChannel] =>  dac.chan(majorDacChannel);
-    (pitch * minorFreqs[minorFreq]) => minorOsc.freq;
-    ((1 - curMajorness) * (1 - curSimplicity)) * volFactor => minorOsc.gain;
-
-    SinOsc majorOsc => adsr =>
-        echos[minorDacChannel] => hpfs[minorDacChannel]
-        => reverbs[minorDacChannel] =>  dac.chan(minorDacChannel);
-    (pitch * majorFreqs[majorFreq]) => majorOsc.freq;
-    (curMajorness * (1 - curSimplicity)) * volFactor => majorOsc.gain;
-
-    SinOsc baseOsc => adsr =>
-        echos[baseDacChannel] => hpfs[baseDacChannel] =>
-        reverbs[baseDacChannel] =>  dac.chan(baseDacChannel);
-    (pitch * baseFreqs[baseFreq]) => baseOsc.freq;
-    (curSimplicity) * volFactor => baseOsc.gain;
+    ((1 - curMajorness) * (1 - curSimplicity)) * volFactor => float minorGain;
+    (curMajorness * (1 - curSimplicity)) * volFactor => float majorGain;
+    (curSimplicity) * volFactor => float baseGain;
 
     if (pluck) {
         if (curMajorness > .5) {
-            majorOsc.freq() * 2 => majorOsc.freq;
+            SinOsc majorOsc => ADSR majorAdsr => echos[majorDacChannel];
+            2 * pitch * majorFreqs[majorFreq] => majorOsc.freq;
+            majorGain => majorOsc.gain;
+            majorAdsr.set(10::ms, duration, 0, 400::ms);
+            volFactor => majorAdsr.gain;
+
+            majorAdsr.keyOn();
+            duration * 1.5 => now;
+            majorAdsr.keyOff();
+            500::ms => now;
+
+            majorOsc =< majorAdsr;
+            majorAdsr =< echos[majorDacChannel];
         } else {
-            minorOsc.freq() * 2 => minorOsc.freq;
+            SinOsc minorOsc => ADSR minorAdsr => echos[minorDacChannel];
+            2 * pitch * minorFreqs[minorFreq] => minorOsc.freq;
+            minorGain => minorOsc.gain;
+
+            minorAdsr.set(10::ms, duration, 0, 400::ms);
+            volFactor => minorAdsr.gain;
+
+            minorAdsr.keyOn();
+            duration * 1.5 => now;
+            minorAdsr.keyOff();
+            minorOsc =< minorAdsr;
+            minorAdsr =< echos[minorDacChannel];
         }
+    } else {
+        SinOsc minorOsc => ADSR minorAdsr => echos[minorDacChannel];
+        pitch * minorFreqs[minorFreq] => minorOsc.freq;
+        minorGain => minorOsc.gain;
+        minorAdsr.set(clockTick * 6, duration, 0, 400::ms);
+        volFactor => minorAdsr.gain;
 
-        adsr.set(10::ms, duration, 0, 400::ms);
+        SinOsc majorOsc => ADSR majorAdsr => echos[majorDacChannel];
+        pitch * majorFreqs[majorFreq] => majorOsc.freq;
+        majorGain => majorOsc.gain;
+        majorAdsr.set(clockTick * 6, duration, 0, 400::ms);
+        volFactor => majorAdsr.gain;
+
+        SinOsc baseOsc => ADSR baseAdsr => echos[baseDacChannel];
+        pitch * baseFreqs[baseFreq] => baseOsc.freq;
+        baseGain => baseOsc.gain;
+        baseAdsr.set(clockTick * 6, duration, 0, 400::ms);
+        volFactor => baseAdsr.gain;
+
+        minorAdsr.keyOn();
+        majorAdsr.keyOn();
+        baseAdsr.keyOn();
+        duration * 1.5 => now;
+        minorAdsr.keyOff();
+        majorAdsr.keyOff();
+        baseAdsr.keyOff();
+
+        500::ms => now;
+
+        minorOsc =< minorAdsr;
+        majorOsc =< majorAdsr;
+        baseOsc =< baseAdsr;
+
+        minorAdsr =< echos[minorDacChannel];
+        majorAdsr =< echos[majorDacChannel];
+        baseAdsr =< echos[baseDacChannel];
     }
-
-    adsr.keyOn();
-    duration * 1.5 => now;
-    adsr.keyOff();
-    500::ms => now;
-
-    minorOsc =< dac;
-    majorOsc =< dac;
-    baseOsc =< dac;
-    adsr =< dac;
 }
 
 fun string spoutKnowledge(int change, int intent)
@@ -187,11 +217,12 @@ fun void generateNoise()
     while(true)
     {
         curNoisiness * 3 => noiseGen.gain;
-        50 :: ms => now;
+        200 :: ms => now;
     }
 }
 
 spork ~ keyboardListener();
+spork ~ generateNoise();
 
 for (0 => int i; i < numChannels; i++) {
     curReverb => reverbs[i].mix;
@@ -201,6 +232,8 @@ for (0 => int i; i < numChannels; i++) {
     volFactor => echos[i].gain;
 
     volFactor => hpfs[i].gain;
+
+    echos[i] => hpfs[i] => reverbs[i] => dac.chan(i);
 }
 
 curVolume => float prevVolume;
@@ -227,7 +260,7 @@ while (true)
         curBassiness => prevBassiness;
     }
 
-    Math.random2(2, 6) => int randomInterval;
+    Math.random2(0, 6) => int randomInterval;
     Math.random2(0, majorFreqs.size() - 1) => int majorFreq;
     Math.random2(0, minorFreqs.size() - 1) => int minorFreq;
     Math.random2(0, baseFreqs.size() - 1) => int baseFreq;
