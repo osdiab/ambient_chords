@@ -13,6 +13,8 @@ dac.channels() => int numChannels;
 NRev reverbs[numChannels];
 Echo echos[numChannels];
 HPF hpfs[numChannels];
+LPF lpfs[numChannels];
+Bitcrusher bcs[numChannels];
 
 1 => int counter;
 15 => int curDuration;
@@ -49,7 +51,7 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
 
     if (pluck) {
         if (curMajorness > .5) {
-            SinOsc majorOsc => ADSR majorAdsr => echos[majorDacChannel];
+            SinOsc majorOsc => ADSR majorAdsr => bcs[majorDacChannel];
             2 * pitch * majorFreqs[majorFreq] => majorOsc.freq;
             majorGain => majorOsc.gain;
             majorAdsr.set(10::ms, duration, 0, 400::ms);
@@ -61,9 +63,9 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
             500::ms => now;
 
             majorOsc =< majorAdsr;
-            majorAdsr =< echos[majorDacChannel];
+            majorAdsr =< bcs[majorDacChannel];
         } else {
-            SinOsc minorOsc => ADSR minorAdsr => echos[minorDacChannel];
+            SinOsc minorOsc => ADSR minorAdsr => bcs[minorDacChannel];
             2 * pitch * minorFreqs[minorFreq] => minorOsc.freq;
             minorGain => minorOsc.gain;
 
@@ -74,22 +76,22 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
             duration * 1.5 => now;
             minorAdsr.keyOff();
             minorOsc =< minorAdsr;
-            minorAdsr =< echos[minorDacChannel];
+            minorAdsr =< bcs[minorDacChannel];
         }
     } else {
-        SinOsc minorOsc => ADSR minorAdsr => echos[minorDacChannel];
+        SinOsc minorOsc => ADSR minorAdsr => bcs[minorDacChannel];
         pitch * minorFreqs[minorFreq] => minorOsc.freq;
         minorGain => minorOsc.gain;
         minorAdsr.set(clockTick * 6, duration, 0, 400::ms);
         volFactor => minorAdsr.gain;
 
-        SinOsc majorOsc => ADSR majorAdsr => echos[majorDacChannel];
+        SinOsc majorOsc => ADSR majorAdsr => bcs[majorDacChannel];
         pitch * majorFreqs[majorFreq] => majorOsc.freq;
         majorGain => majorOsc.gain;
         majorAdsr.set(clockTick * 6, duration, 0, 400::ms);
         volFactor => majorAdsr.gain;
 
-        SinOsc baseOsc => ADSR baseAdsr => echos[baseDacChannel];
+        SinOsc baseOsc => ADSR baseAdsr => bcs[baseDacChannel];
         pitch * baseFreqs[baseFreq] => baseOsc.freq;
         baseGain => baseOsc.gain;
         baseAdsr.set(clockTick * 6, duration, 0, 400::ms);
@@ -104,14 +106,6 @@ fun void triggerNote(int majorFreq, int minorFreq, int baseFreq,
         baseAdsr.keyOff();
 
         500::ms => now;
-
-        minorOsc =< minorAdsr;
-        majorOsc =< majorAdsr;
-        baseOsc =< baseAdsr;
-
-        minorAdsr =< echos[minorDacChannel];
-        majorAdsr =< echos[majorDacChannel];
-        baseAdsr =< echos[baseDacChannel];
     }
 }
 
@@ -223,7 +217,7 @@ fun void generateNoise()
 }
 
 spork ~ keyboardListener();
-spork ~ generateNoise();
+// spork ~ generateNoise();
 
 for (0 => int i; i < numChannels; i++) {
     curReverb => reverbs[i].mix;
@@ -234,13 +228,18 @@ for (0 => int i; i < numChannels; i++) {
 
     volFactor => hpfs[i].gain;
 
-    echos[i] => hpfs[i] => reverbs[i] => dac.chan(i);
+    4000 => lpfs[i].freq;
+
+    32 => bcs[i].bits;
+    1 => bcs[i].downsampleFactor;
+    bcs[i] => lpfs[i] => echos[i] => hpfs[i] => reverbs[i] => dac.chan(i);
 }
 
 curVolume => float prevVolume;
 curVolume => dac.gain;
 
 curBassiness => float prevBassiness;
+curNoisiness => float prevNoisiness;
 for (0 => int i; i < numChannels; i++) {
     300 - curBassiness * 240 => hpfs[i].freq;
 }
@@ -259,6 +258,14 @@ while (true)
             300 - curBassiness * 240 => hpfs[i].freq;
         }
         curBassiness => prevBassiness;
+    }
+
+    if (curNoisiness != prevNoisiness) {
+        for (0 => int i; i < numChannels; i++) {
+            ((curNoisiness * 30) $ int) + 1 => bcs[i].downsampleFactor;
+            (32 - ((curNoisiness * 16) $ int)) => bcs[i].bits;
+        }
+        curNoisiness => prevNoisiness;
     }
 
     Math.random2(0, 6) => int randomInterval;
