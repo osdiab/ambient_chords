@@ -14,7 +14,6 @@ NRev reverbs[numChannels];
 Echo echos[numChannels];
 HPF hpfs[numChannels];
 
-0 => float curCrushiness;
 1 => int counter;
 15 => int curDuration;
 .1 => float curReverb;
@@ -24,7 +23,7 @@ HPF hpfs[numChannels];
 0 => float curBassiness;
 0 => int playing;
 1 => float maxVolume;
-1 => float curVolume;
+0 => float curVolume;
 .5 => float volFactor;
 
 KBHit kb;
@@ -210,13 +209,15 @@ fun void keyboardListener()
 
 fun void generateNoise()
 {
-    SubNoise noiseGen => Delay delay => NRev rev => dac;
-    .5 => rev.mix;
-    50 :: ms => delay.delay;
+    SubNoise noiseGen => HPF hpf => LPF lpf => NRev rev => dac;
+    600 => hpf.freq;
+    8000 => lpf.freq;
+
+    .75 => rev.mix;
 
     while(true)
     {
-        curNoisiness * 3 => noiseGen.gain;
+        curNoisiness * .01 => noiseGen.gain;
         200 :: ms => now;
     }
 }
